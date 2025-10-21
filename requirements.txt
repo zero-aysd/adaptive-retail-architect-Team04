@@ -19,3 +19,5 @@ pinecone
 openai
 langfuse
 streamlit
+azure-identity
+azure-keyvault-secrets

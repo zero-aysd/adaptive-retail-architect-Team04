@@ -8,8 +8,9 @@ from typing import Dict, Any
 import os
 from dotenv import load_dotenv
 from datetime import datetime
-
-load_dotenv()
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+# load_dotenv()
 
 from .models import LayoutRequest, LayoutResponse, ErrorResponse
 from .dependencies import get_api_key, get_azure_openai_client, get_pinecone_index
@@ -21,6 +22,23 @@ from .agents.draftsman import generate_diagram
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+KEYVAULT_URL = "https://kv-capstone-team-four.vault.azure.net/"
+credential = DefaultAzureCredential()
+secret_client = SecretClient(vault_url=KEYVAULT_URL, credential=credential)
+
+# List of secrets to fetch
+SECRETS = [
+    "azure-openai-api-key",
+    "azure-openai-endpoint",
+    "azure-openai-api-version",
+    "azure-openai-deployment",
+    "azure-openai-embeddings",
+    "langfuse-api-secret-key",
+    "langfuse-public-key",
+    "langfuse-host-endpoint",
+    "pinecone-api-key"
+]
 app = FastAPI(
     title="Architect Co-pilot API",
     description="AI-powered adaptive retail layout generator",
@@ -28,6 +46,21 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Fetch secrets at startup
+def load_secrets():
+    for secret_name in SECRETS:
+        try:
+            secret = secret_client.get_secret(secret_name)
+            # Convert secret name to env var format (e.g., azure-openai-api-key -> AZURE_OPENAI_API_KEY)
+            env_name = secret_name.replace("-", "_").upper()
+            os.environ[env_name] = secret.value
+            print(f"✅ Loaded secret: {env_name}")
+        except Exception as e:
+            print(f"⚠ Failed to load secret {secret_name}: {str(e)}")
+
+# Load secrets when the app starts
+load_secrets()
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,4 +132,7 @@ async def http_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
+    import os 
+    for key, value in os.environ.items():
+        print(f"{key}={value}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
