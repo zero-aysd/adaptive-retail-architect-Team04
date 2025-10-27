@@ -10,20 +10,21 @@ from dotenv import load_dotenv
 from datetime import datetime
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-# load_dotenv()
+from app.graph import create_graph
+from app.utils import load_env_file
+
+load_env_file()
 
 from .models import LayoutRequest, LayoutResponse, ErrorResponse
-from .dependencies import get_api_key, get_azure_openai_client, get_pinecone_index
-from .agents.market_analyst import get_local_trends
-from .agents.layout_strategist import generate_layout_plan
-from .agents.draftsman import generate_diagram
+from .dependencies import get_keyvault_url
+
 
 # Configure logging (integrate Langfuse later)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-KEYVAULT_URL = "https://kv-capstone-team-four.vault.azure.net/"
+KEYVAULT_URL = get_keyvault_url()
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=KEYVAULT_URL, credential=credential)
 
@@ -77,40 +78,16 @@ async def health_check():
 @app.post("/generate_layout", response_model=LayoutResponse)
 async def generate_layout(
     request: LayoutRequest,
-    api_key: str = Depends(get_api_key)
-):
+    ):
     try:
         start_time = time.time()
         layout_id = str(uuid.uuid4())
         
         logger.info(f"Generating layout {layout_id} for {request.city}")
-        
-        # Step 1: Market Analyst
-        trends = get_local_trends(request.city, request.target_products or ["electronics"])
-        
-        # Step 2: Layout Strategist (RAG + LLM)
-        plan = generate_layout_plan(request, trends)
-        
-        # Step 3: AI Draftsman
-        diagram_b64 = generate_diagram(plan)
+     
         
         render_time = time.time() - start_time
-        
-        response = LayoutResponse(
-            success=True,
-            layout_id=layout_id,
-            layout_data=plan,
-            diagram_url=diagram_b64,
-            trends_summary=trends,
-            render_time=render_time,
-            generated_at=datetime.now(),
-            metadata={
-                "city": request.city,
-                "store_area": request.store_area,
-                "constraints": request.constraints
-            }
-        )
-        
+      
         logger.info(f"Layout {layout_id} generated in {render_time:.2f}s")
         return response
         

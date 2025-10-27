@@ -21,3 +21,9 @@ langfuse
 streamlit
 azure-identity
 azure-keyvault-secrets
+plotly
+unstructured[local-inference,pdf]
+tenacity
+tqdm
+pillow
+google-genai
