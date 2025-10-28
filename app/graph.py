@@ -10,9 +10,21 @@ from app.utils import load_env_file
 import os
 import json
 from datetime import datetime
+from langfuse import observe, get_client
+from langfuse.langchain import CallbackHandler as LBHandler
 
 # === Load Env ===
 load_env_file()
+
+langfuse = get_client()
+ 
+# Verify connection
+if langfuse.auth_check():
+    print("Langfuse client is authenticated and ready!")
+else:
+    print("Authentication failed. Please check your credentials and host.")
+
+langfuse_handler = LBHandler()
 
 # === Main State ===
 class MainState(TypedDict):
@@ -120,7 +132,7 @@ def create_graph():
     graph.add_edge("strategist", "draftsman")
     graph.add_edge("draftsman", END)
 
-    return graph.compile()
+    return graph.compile().with_config({"callbacks":[langfuse_handler]})
 
 
 

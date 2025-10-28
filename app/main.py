@@ -1,115 +1,91 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uuid
 import time
 import logging
-from typing import Dict, Any
 import os
-from dotenv import load_dotenv
-from datetime import datetime
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
+import base64
 from app.graph import create_graph
 from app.utils import load_env_file
-
-load_env_file()
-
-from .models import LayoutRequest, LayoutResponse, ErrorResponse
+from .models import LayoutRequest
 from .dependencies import get_keyvault_url
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
 
-
-# Configure logging (integrate Langfuse later)
+# === Setup ===
+load_env_file()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
+# Key Vault
 KEYVAULT_URL = get_keyvault_url()
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=KEYVAULT_URL, credential=credential)
 
-# List of secrets to fetch
 SECRETS = [
-    "azure-openai-api-key",
-    "azure-openai-endpoint",
-    "azure-openai-api-version",
-    "azure-openai-deployment",
-    "azure-openai-embeddings",
-    "langfuse-api-secret-key",
+    "azure-openai-api-key", "azure-openai-endpoint", "azure-openai-api-version",
+    "azure-openai-deployment", "azure-openai-embeddings", "pinecone-api-key",
+    "langfuses-secret-key",
     "langfuse-public-key",
     "langfuse-host-endpoint",
-    "pinecone-api-key"
 ]
-app = FastAPI(
-    title="Architect Co-pilot API",
-    description="AI-powered adaptive retail layout generator",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
 
-# Fetch secrets at startup
 def load_secrets():
-    for secret_name in SECRETS:
+    for s in SECRETS:
         try:
-            secret = secret_client.get_secret(secret_name)
-            # Convert secret name to env var format (e.g., azure-openai-api-key -> AZURE_OPENAI_API_KEY)
-            env_name = secret_name.replace("-", "_").upper()
-            os.environ[env_name] = secret.value
-            print(f"✅ Loaded secret: {env_name}")
+            secret = secret_client.get_secret(s)
+            os.environ[s.replace("-", "_").upper()] = secret.value
         except Exception as e:
-            print(f"⚠ Failed to load secret {secret_name}: {str(e)}")
-
-# Load secrets when the app starts
+            logger.warning(f"Secret {s} load failed: {e}")
 load_secrets()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# === App ===
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "service": "architect-copilot"}
+# === Endpoint: Return Base64 Diagram Only ===
+@app.post("/generate_layout")
+async def generate_diagram(request: LayoutRequest):
+    layout_id = str(uuid.uuid4())
+    start = time.time()
+    logger.info(f"Generating diagram (base64) | ID: {layout_id}")
 
-@app.post("/generate_layout", response_model=LayoutResponse)
-async def generate_layout(
-    request: LayoutRequest,
-    ):
     try:
-        start_time = time.time()
-        layout_id = str(uuid.uuid4())
-        
-        logger.info(f"Generating layout {layout_id} for {request.city}")
-     
-        
-        render_time = time.time() - start_time
-      
-        logger.info(f"Layout {layout_id} generated in {render_time:.2f}s")
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        graph = create_graph()
 
-# Global exception handler
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=ErrorResponse(
-            error=exc.detail,
-            error_code="API_ERROR",
-            timestamp=datetime.now()
-        ).dict()
-    )
+        result = graph.invoke({
+            "store_name": "Blue Retail Store",
+            "city": request.city,
+            "keywords": request.keywords or ["electronics"],
+            "entrance_side": "south",
+            "messages": [],
+        })
+
+        diagram_path = result.get("diagram_path")
+        if not diagram_path or not os.path.exists(diagram_path):
+            raise HTTPException(status_code=500, detail="Diagram file not generated")
+
+        # Read and encode to base64
+        with open(diagram_path, "rb") as img_file:
+            base64_str = base64.b64encode(img_file.read()).decode("utf-8")
+
+        logger.info(f"Diagram encoded to base64 in {time.time() - start:.2f}s")
+
+        # Return ONLY base64
+
+        return JSONResponse({
+            "diagram_base64": base64_str
+        })
+
+    except Exception as e:
+        logger.error(f"Diagram generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate diagram")
+    
 
 if __name__ == "__main__":
     import uvicorn
-    import os 
-    for key, value in os.environ.items():
-        print(f"{key}={value}")
+    # import os 
+    # for key, value in os.environ.items():
+    #     print(f"{key}={value}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
